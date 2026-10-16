@@ -1,0 +1,16 @@
+{
+  "name": "@usend/node",
+  "version": "1.2.0",
+  "description": "The official Node.js SDK for usend, the email API for developers.",
+  "homepage": "https://usend.et/docs",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" }
+  },
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "keywords": ["usend", "email", "transactional email", "email api", "webhooks"],
+  "scripts": { "test": "node --test test.js" }
+}
