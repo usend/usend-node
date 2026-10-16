@@ -47,7 +47,11 @@ export interface Page {
 type Obj = Record<string, any>;
 
 export declare class Usend {
-  constructor(apiKey?: string, options?: { baseUrl?: string; fetch?: typeof fetch });
+  /**
+   * `maxRetries` (default 2): retries after the first attempt, with backoff, on 429 (honoring Retry-After), 5xx and network errors.
+   * A POST is only retried after a 5xx or network error when it carries an idempotency key. `sleep` replaces the waiting (for tests).
+   */
+  constructor(apiKey?: string, options?: { baseUrl?: string; fetch?: typeof fetch; maxRetries?: number; sleep?: (ms: number) => Promise<void> });
   /** SMTP settings for this key, in Nodemailer's shape. */
   smtp(options?: SmtpOptions): SmtpConfig;
   emails: {

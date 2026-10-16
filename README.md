@@ -22,6 +22,8 @@ const { data, error } = await usend.emails.send({
 Every method resolves to `{ data, error }`; exactly one is `null`. Errors have `statusCode`, `name` and `message`.
 
 - Needs Node.js 18 or newer. No dependencies.
+- Requests are retried (`maxRetries`, default 2) with backoff on `429` (honoring `Retry-After`), `5xx` and network errors. A `POST` is only retried after a
+  `5xx` or network error when it carries an idempotency key, so an email is never sent twice by a retry.
 - The key defaults to `USEND_API_KEY`; the base URL to `USEND_BASE_URL` or `https://api.usend.et`
   (`new Usend(key, { baseUrl })`).
 - `usend.smtp()` / `smtpConfig(key)` return SMTP settings (host `smtp.usend.et`, port 465 or 587).

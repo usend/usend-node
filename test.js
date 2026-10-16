@@ -208,3 +208,65 @@ test("OAuth calls send no key, map OAuth errors, and build the authorize URL", a
   assert.strictEqual(u.searchParams.get("code_challenge_method"), "S256");
   assert.strictEqual(u.searchParams.get("response_type"), "code");
 });
+
+// A scripted fetch: answers with the queued { status, headers, body } in order and records each call.
+function scripted(queue) {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, init });
+    const next = queue.shift();
+    if (next instanceof Error) throw next;
+    const { status, headers = {}, body = {} } = next;
+    return { ok: status < 400, status, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, json: async () => body, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  return { fetch, calls };
+}
+const noWait = async () => {};
+const limited = { status: 429, headers: { "retry-after": "0" }, body: { statusCode: 429, name: "rate_limit_exceeded", message: "slow down" } };
+const boom = { status: 503, body: { statusCode: 503, name: "internal_server_error", message: "x" } };
+const mail = { from: "a@x.com", to: "b@y.com", subject: "x", text: "y" };
+
+test("a 429 is retried for any request, honoring Retry-After", async () => {
+  const waits = [];
+  const f = scripted([limited, { status: 200, body: { id: "e1" } }]);
+  const usend = new Usend("us_test", { fetch: f.fetch, sleep: async (ms) => waits.push(ms) });
+  assert.deepStrictEqual(await usend.emails.send(mail), { data: { id: "e1" }, error: null });
+  assert.strictEqual(f.calls.length, 2);
+  assert.deepStrictEqual(waits, [0]);
+});
+
+test("a 5xx on a GET is retried; on a POST only with an idempotency key", async () => {
+  let f = scripted([boom, { status: 200, body: { data: [] } }]);
+  assert.deepStrictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).domains.list()).data, { data: [] });
+  assert.strictEqual(f.calls.length, 2);
+
+  f = scripted([boom, { status: 200, body: { id: "e1" } }]);
+  const res = await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).emails.send(mail);
+  assert.strictEqual(res.error.statusCode, 503);
+  assert.strictEqual(f.calls.length, 1, "an email must not be sent twice by a retry");
+
+  f = scripted([boom, { status: 200, body: { id: "e1" } }]);
+  assert.deepStrictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).emails.send(mail, { idempotencyKey: "k1" })).data, { id: "e1" });
+  assert.strictEqual(f.calls.length, 2);
+});
+
+test("retries stop after maxRetries, and a wait over a minute is not slept", async () => {
+  let f = scripted([limited, limited, limited, { status: 200, body: {} }]);
+  const res = await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).domains.list();
+  assert.strictEqual(res.error.statusCode, 429);
+  assert.strictEqual(f.calls.length, 3);
+
+  f = scripted([{ status: 429, headers: { "retry-after": "120" }, body: { statusCode: 429, name: "rate_limit_exceeded", message: "slow" } }]);
+  assert.strictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).domains.list()).error.statusCode, 429);
+  assert.strictEqual(f.calls.length, 1);
+
+  f = scripted([limited, { status: 200, body: {} }]);
+  assert.strictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait, maxRetries: 0 }).domains.list()).error.statusCode, 429);
+  assert.strictEqual(f.calls.length, 1);
+});
+
+test("a network error on a GET is retried", async () => {
+  const f = scripted([new Error("offline"), { status: 200, body: { data: [] } }]);
+  assert.deepStrictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).domains.list()).data, { data: [] });
+  assert.strictEqual(f.calls.length, 2);
+});

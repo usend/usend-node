@@ -8,7 +8,7 @@
 // Every method resolves to { data, error }: exactly one of them is null. Errors carry the API's
 // { statusCode, name, message }; network failures use name "application_error".
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const DEFAULT_BASE_URL = "https://api.usend.et";
 const DEFAULT_SMTP_HOST = "smtp.usend.et";
 
@@ -33,6 +33,10 @@ class Usend {
     if (!this.key) throw new Error('Missing API key. Pass it to new Usend("us_...") or set USEND_API_KEY.');
     this.baseUrl = (options.baseUrl || env.USEND_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
     this._fetch = options.fetch || globalThis.fetch;
+    // Retries after the first attempt, with backoff, on 429 (honoring Retry-After), 5xx and network errors. A POST is only
+    // retried after a 5xx or network error when it carries an Idempotency-Key, so an email is never sent twice by a retry.
+    this.maxRetries = Number.isInteger(options.maxRetries) && options.maxRetries >= 0 ? options.maxRetries : 2;
+    this._sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const r = this._request.bind(this);
 
     /**
@@ -318,11 +322,25 @@ class Usend {
       ...headers,
     };
     for (const k of Object.keys(h)) if (h[k] === null) delete h[k];
+    const safe = method === "GET" || method === "DELETE" || method === "HEAD" || Object.keys(h).some((k) => k.toLowerCase() === "idempotency-key");
     let res;
-    try {
-      res = await this._fetch(this.baseUrl + path, { method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined });
-    } catch (e) {
-      return { data: null, error: { statusCode: null, name: "application_error", message: String(e && e.message ? e.message : e) } };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await this._fetch(this.baseUrl + path, { method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined });
+      } catch (e) {
+        if (attempt < this.maxRetries && safe) {
+          await this._sleep(retryWait(attempt, null));
+          continue;
+        }
+        return { data: null, error: { statusCode: null, name: "application_error", message: String(e && e.message ? e.message : e) } };
+      }
+      const wait = res.status === 429 || (res.status >= 500 && safe) ? retryWait(attempt, res.headers && res.headers.get ? res.headers.get("retry-after") : null) : null;
+      if (attempt < this.maxRetries && wait !== null) {
+        await res.arrayBuffer().catch(() => {}); // free the connection before trying again
+        await this._sleep(wait);
+        continue;
+      }
+      break;
     }
     if (res.ok && as !== "json") {
       try {
@@ -340,6 +358,15 @@ class Usend {
     }
     return { data: json, error: null };
   }
+}
+
+/** Milliseconds to wait before a retry, or null when the server asked for more than a minute (the error is returned instead). */
+function retryWait(attempt, retryAfter) {
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return seconds > 60 ? null : Math.max(0, seconds * 1000);
+  }
+  return Math.min(500 * 2 ** attempt, 8000) + Math.random() * 250;
 }
 
 /**
