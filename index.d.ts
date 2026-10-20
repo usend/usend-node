@@ -102,7 +102,7 @@ export declare class Usend {
     create(d: { name: string; custom_return_path?: string }): Response<Obj>;
     list(): Response<List<Obj>>;
     get(id: string): Response<Obj>;
-    update(d: { id: string; open_tracking?: boolean; click_tracking?: boolean; receiving_enabled?: boolean; custom_return_path?: string }): Response<Obj>;
+    update(d: { id: string; open_tracking?: boolean; click_tracking?: boolean; receiving_enabled?: boolean; receiving_mode?: "all" | "inboxes"; custom_return_path?: string }): Response<Obj>;
     verify(id: string): Response<Obj>;
     autoConfigure(id: string, body: { provider: "cloudflare"; api_token: string }): Response<Obj>;
     remove(id: string): Response<Obj>;
