@@ -11,6 +11,8 @@
   },
   "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
   "engines": { "node": ">=18" },
-  "keywords": ["usend", "email", "transactional email", "email api", "webhooks"],
+  "peerDependencies": { "@react-email/render": "*" },
+  "peerDependenciesMeta": { "@react-email/render": { "optional": true } },
+  "keywords": ["usend", "email", "transactional email", "email api", "webhooks", "react email"],
   "scripts": { "test": "node --test test.js" }
 }

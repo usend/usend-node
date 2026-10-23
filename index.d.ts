@@ -1,3 +1,10 @@
+// React types are optional: with @types/react installed, `react` is typed as React.ReactNode; without it, as any.
+// @ts-ignore -- react is an optional peer, used for its types only
+import type * as React from "react";
+
+/** A React Email element, rendered to `html` by the SDK with @react-email/render (an optional peer dependency). */
+export type ReactEmail = React.ReactNode;
+
 export interface UsendError {
   statusCode: number | null;
   name: string;
@@ -20,6 +27,11 @@ export interface SendEmail {
   to: string | string[];
   subject?: string;
   html?: string;
+  /**
+   * A React Email component, e.g. `<WelcomeEmail name="Ada" />`. Rendered to `html` before the request (needs
+   * `npm install @react-email/render`); never sent to the API. When both are given, it replaces `html`.
+   */
+  react?: ReactEmail;
   text?: string;
   cc?: string | string[];
   bcc?: string | string[];
@@ -85,10 +97,11 @@ export declare class Usend {
     download(id: string, attachmentId: string): Response<ArrayBuffer>;
   };
   templates: {
-    create(t: Obj): Response<{ object: "template"; id: string }>;
+    /** `react` is rendered to `html` with @react-email/render. */
+    create(t: Obj & { react?: ReactEmail }): Response<{ object: "template"; id: string }>;
     list(params?: Page): Response<List<Obj>>;
     get(idOrAlias: string): Response<Obj>;
-    update(idOrAlias: string, t: Obj): Response<{ object: "template"; id: string }>;
+    update(idOrAlias: string, t: Obj & { react?: ReactEmail }): Response<{ object: "template"; id: string }>;
     publish(idOrAlias: string): Response<{ object: "template"; id: string }>;
     duplicate(idOrAlias: string): Response<{ object: "template"; id: string }>;
     remove(idOrAlias: string): Response<Obj>;
@@ -188,10 +201,11 @@ export declare class Usend {
     stats(id: string, params?: { days?: number }): Response<Obj>;
   };
   broadcasts: {
-    create(b: { audience_id: string; from: string; subject: string; html?: string; text?: string; reply_to?: string | string[]; name?: string }): Response<{ id: string }>;
+    /** `react` is rendered to `html` with @react-email/render. */
+    create(b: { audience_id: string; from: string; subject: string; html?: string; react?: ReactEmail; text?: string; reply_to?: string | string[]; name?: string }): Response<{ id: string }>;
     list(params?: Obj): Response<List<Obj>>;
     get(id: string): Response<Obj>;
-    update(id: string, b: Obj): Response<Obj>;
+    update(id: string, b: Obj & { react?: ReactEmail }): Response<Obj>;
     send(id: string, body?: { scheduled_at?: string }): Response<{ id: string }>;
     test(id: string, to: string): Response<{ id: string }>;
     remove(id: string): Response<Obj>;

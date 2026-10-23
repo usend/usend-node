@@ -270,3 +270,98 @@ test("a network error on a GET is retried", async () => {
   assert.deepStrictEqual((await new Usend("us_test", { fetch: f.fetch, sleep: noWait }).domains.list()).data, { data: [] });
   assert.strictEqual(f.calls.length, 2);
 });
+
+// React Email: the renderer is stubbed through _reactRenderer, so these tests need neither react nor @react-email/render.
+const { _reactRenderer } = require("./index.js");
+
+function withRenderer(load, fn) {
+  return async () => {
+    const original = _reactRenderer.load;
+    _reactRenderer.load = load;
+    try {
+      await fn();
+    } finally {
+      _reactRenderer.load = original;
+    }
+  };
+}
+const element = { type: "WelcomeEmail", props: { name: "Ada" } };
+const asyncRender = async () => ({ render: async (node) => `<p>Hello ${node.props.name}</p>` });
+
+test("emails.send renders react to html and never sends react", withRenderer(asyncRender, async () => {
+  const f = fake(200, { id: "e1" });
+  const usend = new Usend("us_test", { fetch: f.fetch });
+  const res = await usend.emails.send({ from: "a@x.com", to: "b@y.com", subject: "Hi", react: element });
+  assert.deepStrictEqual(res, { data: { id: "e1" }, error: null });
+  const body = JSON.parse(f.calls[0].init.body);
+  assert.strictEqual(body.html, "<p>Hello Ada</p>");
+  assert.ok(!("react" in body));
+  assert.ok(!("text" in body));
+}));
+
+test("react replaces html, and a synchronous render (older @react-email/render) works", withRenderer(async () => ({ render: () => "<p>sync</p>" }), async () => {
+  const f = fake(200, { id: "e1" });
+  await new Usend("us_test", { fetch: f.fetch }).emails.send({ from: "a@x.com", to: "b@y.com", subject: "Hi", html: "<p>old</p>", text: "plain", react: element });
+  const body = JSON.parse(f.calls[0].init.body);
+  assert.strictEqual(body.html, "<p>sync</p>");
+  assert.strictEqual(body.text, "plain");
+}));
+
+test("batch.send renders each email's react", withRenderer(asyncRender, async () => {
+  const f = fake(200, { data: [{ id: "e1" }, { id: "e2" }] });
+  await new Usend("us_test", { fetch: f.fetch }).batch.send([
+    { from: "a@x.com", to: "b@y.com", subject: "1", react: element },
+    { from: "a@x.com", to: "c@y.com", subject: "2", html: "<p>plain</p>" },
+  ]);
+  const body = JSON.parse(f.calls[0].init.body);
+  assert.deepStrictEqual(body.map((e) => e.html), ["<p>Hello Ada</p>", "<p>plain</p>"]);
+  assert.ok(body.every((e) => !("react" in e)));
+}));
+
+test("broadcasts and templates render react", withRenderer(asyncRender, async () => {
+  const f = fake(200, { id: "x" });
+  const usend = new Usend("us_test", { fetch: f.fetch });
+  await usend.broadcasts.create({ audience_id: "a1", from: "a@x.com", subject: "News", react: element });
+  await usend.broadcasts.update("b1", { react: element });
+  await usend.templates.create({ name: "welcome", react: element });
+  await usend.templates.update("welcome", { react: element });
+  for (const call of f.calls) {
+    const body = JSON.parse(call.init.body);
+    assert.strictEqual(body.html, "<p>Hello Ada</p>");
+    assert.ok(!("react" in body));
+  }
+  assert.deepStrictEqual(f.calls.map((c) => c.init.method), ["POST", "PATCH", "POST", "PATCH"]);
+}));
+
+test("react without @react-email/render throws a clear error and sends nothing", withRenderer(async () => {
+  const e = new Error("Cannot find package '@react-email/render'");
+  e.code = "ERR_MODULE_NOT_FOUND";
+  throw e;
+}, async () => {
+  const f = fake(200, { id: "e1" });
+  await assert.rejects(
+    new Usend("us_test", { fetch: f.fetch }).emails.send({ from: "a@x.com", to: "b@y.com", subject: "Hi", react: element }),
+    /npm install @react-email\/render/,
+  );
+  assert.strictEqual(f.calls.length, 0);
+}));
+
+test("the real import fails cleanly when @react-email/render is not installed", async (t) => {
+  let installed = true;
+  try {
+    require.resolve("@react-email/render");
+  } catch {
+    installed = false;
+  }
+  if (installed) return t.skip("@react-email/render is installed here");
+  await assert.rejects(
+    new Usend("us_test", { fetch: fake(200, {}).fetch }).emails.send({ from: "a@x.com", to: "b@y.com", subject: "Hi", react: element }),
+    /Failed to render React component/,
+  );
+});
+
+test("the renderer is not loaded when react is absent", withRenderer(async () => { throw new Error("must not load"); }, async () => {
+  const f = fake(200, { id: "e1" });
+  const res = await new Usend("us_test", { fetch: f.fetch }).emails.send({ from: "a@x.com", to: "b@y.com", subject: "Hi", html: "<p>Hi</p>" });
+  assert.strictEqual(res.error, null);
+}));

@@ -4,6 +4,7 @@
 //   const { Usend } = require("@usend/node");      // or: import { Usend } from "@usend/node";
 //   const usend = new Usend(process.env.USEND_API_KEY);
 //   const { data, error } = await usend.emails.send({ from, to, subject, html });
+//   // or react: <WelcomeEmail /> (rendered to html here with @react-email/render, an optional peer dependency)
 //
 // Every method resolves to { data, error }: exactly one of them is null. Errors carry the API's
 // { statusCode, name, message }; network failures use name "application_error".
@@ -46,7 +47,7 @@ class Usend {
     this.smtp = (o = {}) => smtpConfig(this.key, { baseUrl: this.baseUrl, ...o });
 
     this.emails = {
-      send: (email, o = {}) => r("POST", "/emails", email, idem(o)),
+      send: async (email, o = {}) => r("POST", "/emails", await withReact(email), idem(o)),
       get: (id) => r("GET", `/emails/${enc(id)}`),
       list: (params) => r("GET", `/emails${qs(params)}`),
       update: ({ id, ...body }) => r("PATCH", `/emails/${enc(id)}`, body),
@@ -66,8 +67,8 @@ class Usend {
     };
     this.batch = {
       /** @param {{ idempotencyKey?: string, validation?: "strict" | "permissive" }} [o] */
-      send: (emails, o = {}) =>
-        r("POST", "/emails/batch", emails, { ...idem(o), ...(o.validation ? { "x-batch-validation": o.validation } : {}) }),
+      send: async (emails, o = {}) =>
+        r("POST", "/emails/batch", Array.isArray(emails) ? await Promise.all(emails.map(withReact)) : emails, { ...idem(o), ...(o.validation ? { "x-batch-validation": o.validation } : {}) }),
     };
     this.received = {
       list: (params) => r("GET", `/inbound/emails${qs(params)}`),
@@ -83,10 +84,10 @@ class Usend {
       download: (id, attachmentId) => r("GET", `/inbound/emails/${enc(id)}/attachments/${enc(attachmentId)}`, undefined, {}, "buffer"),
     };
     this.templates = {
-      create: (t) => r("POST", "/templates", t),
+      create: async (t) => r("POST", "/templates", await withReact(t)),
       list: (params) => r("GET", `/templates${qs(params)}`),
       get: (idOrAlias) => r("GET", `/templates/${enc(idOrAlias)}`),
-      update: (idOrAlias, t) => r("PATCH", `/templates/${enc(idOrAlias)}`, t),
+      update: async (idOrAlias, t) => r("PATCH", `/templates/${enc(idOrAlias)}`, await withReact(t)),
       publish: (idOrAlias) => r("POST", `/templates/${enc(idOrAlias)}/publish`),
       duplicate: (idOrAlias) => r("POST", `/templates/${enc(idOrAlias)}/duplicate`),
       remove: (idOrAlias) => r("DELETE", `/templates/${enc(idOrAlias)}`),
@@ -194,10 +195,10 @@ class Usend {
       stats: (id, params) => r("GET", `/short-links/${enc(id)}/stats${qs(params)}`),
     };
     this.broadcasts = {
-      create: (b) => r("POST", "/broadcasts", b),
+      create: async (b) => r("POST", "/broadcasts", await withReact(b)),
       list: (params) => r("GET", `/broadcasts${qs(params)}`),
       get: (id) => r("GET", `/broadcasts/${enc(id)}`),
-      update: (id, b) => r("PATCH", `/broadcasts/${enc(id)}`, b),
+      update: async (id, b) => r("PATCH", `/broadcasts/${enc(id)}`, await withReact(b)),
       send: (id, body = {}) => r("POST", `/broadcasts/${enc(id)}/send`, body),
       test: (id, to) => r("POST", `/broadcasts/${enc(id)}/test`, { to }),
       remove: (id) => r("DELETE", `/broadcasts/${enc(id)}`),
@@ -393,6 +394,30 @@ function smtpHostFor(baseUrl) {
   }
 }
 
+// React Email: `react` is rendered to `html` here, before the request, and never sent to the API (like Resend's SDK: when both
+// are given, the rendered `react` replaces `html`; no `text` is derived). @react-email/render is an optional peer dependency,
+// imported only when `react` is used. `reactRenderer.load` is replaceable in tests.
+const reactRenderer = { load: () => import("@react-email/render") };
+
+async function renderReact(node) {
+  let render;
+  try {
+    const m = await reactRenderer.load();
+    render = m.render || m.renderAsync || (m.default && (m.default.render || m.default.renderAsync));
+  } catch (e) {
+    throw new Error("Failed to render React component. Make sure to install `@react-email/render` or `@react-email/components` (npm install @react-email/render).", { cause: e });
+  }
+  if (typeof render !== "function") throw new Error("@react-email/render does not export a render function. Update it: npm install @react-email/render@latest");
+  return render(node); // a Promise in @react-email/render 1.x and later, a string before
+}
+
+async function withReact(payload) {
+  if (!payload || typeof payload !== "object" || !("react" in payload)) return payload;
+  const { react, ...body } = payload;
+  if (react) body.html = await renderReact(react);
+  return body;
+}
+
 function idem(o) {
   return o && o.idempotencyKey ? { "Idempotency-Key": o.idempotencyKey } : {};
 }
@@ -424,4 +449,4 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-module.exports = { Usend, verifyWebhook, smtpConfig, default: Usend };
+module.exports = { Usend, verifyWebhook, smtpConfig, default: Usend, _reactRenderer: reactRenderer };

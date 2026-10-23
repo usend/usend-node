@@ -21,7 +21,35 @@ const { data, error } = await usend.emails.send({
 
 Every method resolves to `{ data, error }`; exactly one is `null`. Errors have `statusCode`, `name` and `message`.
 
-- Needs Node.js 18 or newer. No dependencies.
+## React Email
+
+Pass a [React Email](https://react.email) component as `react` and the SDK renders it to HTML before sending, the same way
+Resend's SDK does:
+
+```bash
+npm install @react-email/components @react-email/render
+```
+
+```tsx
+import { WelcomeEmail } from "./emails/welcome";
+
+await usend.emails.send({
+  from: "Acme <hello@acme.com>",
+  to: "ann@example.com",
+  subject: "Welcome",
+  react: <WelcomeEmail name="Ann" />,
+});
+```
+
+- `react` works in `emails.send`, `batch.send` (per email), `broadcasts.create` / `update` and `templates.create` / `update`.
+- It is never sent to the API: it is rendered to `html`, and replaces `html` if you pass both. No `text` is derived; pass it yourself if you want one.
+- `@react-email/render` is an optional peer dependency, imported only when `react` is used. Without it, the call throws an error
+  telling you to install it (no request is made).
+- With `@types/react` installed, `react` is typed as `React.ReactNode`; without it, the SDK's types do not need React.
+
+## Notes
+
+- Needs Node.js 18 or newer. No dependencies (React Email support uses `@react-email/render` only if you install it).
 - Requests are retried (`maxRetries`, default 2) with backoff on `429` (honoring `Retry-After`), `5xx` and network errors. A `POST` is only retried after a
   `5xx` or network error when it carries an idempotency key, so an email is never sent twice by a retry.
 - The key defaults to `USEND_API_KEY`; the base URL to `USEND_BASE_URL` or `https://api.usend.et`
